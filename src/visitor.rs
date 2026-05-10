@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{Expr, ExprKind};
+use crate::{BinopKind, Expr, ExprKind};
 
 pub trait FoldExpr: Sized {
     fn fold_expr(&mut self, expr: Expr) -> Expr {
@@ -41,6 +41,26 @@ pub trait FoldExpr: Sized {
             kind: ExprKind::FieldAccess(Box::new(object), field),
         }
     }
+
+    fn fold_binop(&mut self, span: Range<usize>, left: Expr, right: Expr, kind: BinopKind) -> Expr {
+        Expr {
+            span,
+            kind: ExprKind::Binop(Box::new(left), Box::new(right), kind),
+        }
+    }
+
+    fn fold_ternary(
+        &mut self,
+        span: Range<usize>,
+        cond: Expr,
+        if_true: Expr,
+        if_false: Expr,
+    ) -> Expr {
+        Expr {
+            span,
+            kind: ExprKind::Ternary(Box::new(cond), Box::new(if_true), Box::new(if_false)),
+        }
+    }
 }
 
 pub fn fold_expr<F: FoldExpr>(folder: &mut F, expr: Expr) -> Expr {
@@ -61,6 +81,17 @@ pub fn fold_expr<F: FoldExpr>(folder: &mut F, expr: Expr) -> Expr {
         ExprKind::FieldAccess(object, field) => {
             let object = folder.fold_expr(*object);
             folder.fold_field_access(span, object, field)
+        }
+        ExprKind::Binop(left, right, op) => {
+            let left = folder.fold_expr(*left);
+            let right = folder.fold_expr(*right);
+            folder.fold_binop(span, left, right, op)
+        }
+        ExprKind::Ternary(cond, if_true, if_false) => {
+            let cond = folder.fold_expr(*cond);
+            let if_true = folder.fold_expr(*if_true);
+            let if_false = folder.fold_expr(*if_false);
+            folder.fold_ternary(span, cond, if_true, if_false)
         }
     }
 }
@@ -88,6 +119,20 @@ pub trait Visitor: Sized {
         object: &Expr,
         field: &str,
     ) -> Self::Output;
+    fn visit_binop(
+        &mut self,
+        span: &Range<usize>,
+        left: &Expr,
+        right: &Expr,
+        kind: BinopKind,
+    ) -> Self::Output;
+    fn visit_ternary(
+        &mut self,
+        span: &Range<usize>,
+        cond: &Expr,
+        if_true: &Expr,
+        if_false: &Expr,
+    ) -> Self::Output;
 }
 
 pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) -> V::Output {
@@ -109,6 +154,17 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) -> V::Output {
         ExprKind::FieldAccess(object, field) => {
             visitor.visit_expr(object);
             visitor.visit_field_access(&expr.span, object, field)
+        }
+        ExprKind::Binop(left, right, op) => {
+            visitor.visit_expr(left);
+            visitor.visit_expr(right);
+            visitor.visit_binop(&expr.span, left, right, *op)
+        }
+        ExprKind::Ternary(cond, if_true, if_false) => {
+            visitor.visit_expr(cond);
+            visitor.visit_expr(if_true);
+            visitor.visit_expr(if_false);
+            visitor.visit_ternary(&expr.span, cond, if_true, if_false)
         }
     }
 }
